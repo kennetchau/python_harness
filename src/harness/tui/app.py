@@ -40,6 +40,7 @@ from ..state.seed import seed
 
 PREVIEW_CAP = 4000
 RESULT_CAP = 600
+REASONING_STYLE = "dim italic"
 
 
 # ---------- messages ----------
@@ -120,9 +121,13 @@ class Conversation(RichLog):
     def _rerender(self) -> None:
         self._last_render = time.monotonic()
         doc = Text()
-        for part in self._blocks:
+        for i, part in enumerate(self._blocks):
+            if i:
+                doc.append("\n")          # plain-string newline: no span-boundary interaction
             doc.append_text(part)
         if self._current is not None:
+            if self._blocks or doc.plain:
+                doc.append("\n")
             doc.append_text(self._current)
         RichLog.clear(self)
         if doc.plain:
@@ -170,8 +175,8 @@ class ApprovalModal(ModalScreen[str]):
             yield Label(f"approval requested — {self._name}")
             yield RichLog(id="approval-preview", wrap=True,
                           markup=False, highlight=False)
-            yield Label("[y]es once    [a]lways allow this tool    "
-                        "[n]o / esc — deny")
+            yield Label(escape("[y]es once    [a]lways allow this tool    "
+                        "[n]o / esc — deny"))
 
     def on_mount(self) -> None:
         self.query_one("#approval-preview", RichLog).write(
@@ -404,7 +409,7 @@ class HarnessApp(App):
         if kind == "text":
             conv.stream("text", data["text"])
         elif kind == "reasoning":
-            conv.stream("reasoning", data["text"])
+            conv.stream(REASONING_STYLE, data["text"])
         elif kind == "tool":
             conv.flush()
             args = data.get("args") or {}
