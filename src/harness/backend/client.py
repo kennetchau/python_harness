@@ -83,7 +83,7 @@ class BackendClient:
         self._max_tokens = cfg.backend.max_tokens
         self._thinking_budget = cfg.backend.thinking_budget
 
-    def _payload(self, messages, tools, max_tokens: int, stream: bool) -> dict:
+    def _payload(self, messages, tools, max_tokens: int, stream: bool, thinking: bool = True) -> dict:
         payload = {
             "model": self._model,
             "messages": messages,
