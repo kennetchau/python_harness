@@ -81,6 +81,7 @@ class BackendClient:
         self._model = cfg.backend.model
         self._temperature = cfg.backend.temperature
         self._max_tokens = cfg.backend.max_tokens
+        self._thinking_budget = cfg.backend.thinking_budget
 
     def _payload(self, messages, tools, max_tokens: int, stream: bool) -> dict:
         payload = {
@@ -90,6 +91,8 @@ class BackendClient:
             "max_tokens": max_tokens,
             "stream": stream,
         }
+        if thinking and self._thinking_budget > 0:
+            payload["thinking_budget_tokens"] = self._thinking_budget
         if tools:  # some backends 400 on an empty tools array
             payload["tools"] = tools
         if stream:
@@ -180,7 +183,7 @@ class BackendClient:
 
     def complete(self, messages: list[dict], max_tokens: int) -> str:
         """One-shot completion (compaction pass). Returns the content string."""
-        payload = self._payload(messages, None, max_tokens, stream=False)
+        payload = self._payload(messages, None, max_tokens, stream=False, thinking=False)
         request = self._client.build_request(
             "POST", f"{self._base}/chat/completions", json=payload)
         resp = self._send(request, stream=False)

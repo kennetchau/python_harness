@@ -39,7 +39,8 @@ class BackendConfig:
     api_key: str = "none"
     model: str = "default"
     temperature: float = 0.2
-    max_tokens: int = 8192
+    max_tokens: int = 50000
+    thinking_budget: int = 8192
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class ContextConfig:
     summarize: str = "auto"
     summarize_threshold: float = 0.7
     keep_recent_turns: int = 8
-    summary_max_tokens: int = 2000
+    summary_max_tokens: int = 4096
 
 
 @dataclass(frozen=True)
@@ -147,14 +148,15 @@ base_url = "http://localhost:8080/v1"
 api_key = "none"
 model = "default"
 temperature = 0.2
-max_tokens = 8192
+max_tokens = 50000
+thinking_budget = 8192
 
 [context]
 max_tokens = 240000
 summarize = "auto"            # off | auto | manual
 summarize_threshold = 0.7     # compact when prompt tokens exceed max_tokens * threshold
 keep_recent_turns = 8
-summary_max_tokens = 2000
+summary_max_tokens = 4096
 
 [workspace]
 # path = "/workspace"
