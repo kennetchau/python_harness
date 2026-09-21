@@ -1,0 +1,35 @@
+#main-area {
+    layout: vertical;
+    height: 1fr;
+}
+
+Conversation {
+    height: 1fr;
+    border: round $primary;
+    background: transparent;
+    padding: 0 1;
+}
+
+StatusBar {
+    height: 1;
+    background: $primary-background 20%;
+    color: $text;
+    padding: 0 1;
+}
+
+#approval-modal,
+#model-modal {
+    width: 76;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $surface;
+    border: round $warning;
+}
+
+#approval-modal RichLog {
+    height: auto;
+    max-height: 16;
+    overflow-y: auto;
+}
+

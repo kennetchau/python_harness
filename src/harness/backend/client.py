@@ -125,7 +125,7 @@ class BackendClient:
         raise BackendError(last)
 
 
-    def stream_chat(self, messages: list[dict], tools: list[dict] | None = None
+    def stream_chat(self, messages: list[dict], tools: list[dict] | None = None, cancel: threading.Event | None = None
                     ) -> Iterator[TextDelta | ToolCallDelta | Done]:
         """Stream one completion. Stop iterating (Esc) and the request is
         cancelled by resp.close() in the finally block; discard the partial."""
@@ -137,6 +137,8 @@ class BackendClient:
         usage: Usage | None = None
         try:
             for raw in resp.iter_lines():
+                if cancel is not None and cancel.is_set():
+                    break
                 line = raw.strip()
                 if not line.startswith("data:"):
                     continue
