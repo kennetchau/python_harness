@@ -129,7 +129,7 @@ class Conversation(RichLog):
             if self._blocks or doc.plain:
                 doc.append("\n")
             doc.append_text(self._current)
-        RichLog.clear(self)
+        #RichLog.clear(self)
         if doc.plain:
             RichLog.write(self, doc)
 
