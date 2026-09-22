@@ -148,7 +148,7 @@ base_url = "http://localhost:8080/v1"
 api_key = "none"
 model = "default"
 temperature = 0.2
-max_tokens = 50000
+max_tokens = 100000
 thinking_budget = 8192
 
 [context]
