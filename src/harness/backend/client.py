@@ -92,8 +92,9 @@ class BackendClient:
             "stream": stream,
             "reasoning_effort": 'medium'
         }
-        if thinking and self._thinking_budget > 0:
-            payload["thinking_budget_tokens"] = self._thinking_budget
+        # comment out the thinking to see if it still stop thinking halfway
+        # if thinking and self._thinking_budget > 0:
+        #     payload["thinking_budget_tokens"] = self._thinking_budget
         if tools:  # some backends 400 on an empty tools array
             payload["tools"] = tools
         if stream:
