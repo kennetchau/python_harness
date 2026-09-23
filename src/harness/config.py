@@ -39,7 +39,7 @@ class BackendConfig:
     api_key: str = "none"
     model: str = "default"
     temperature: float = 0.2
-    max_tokens: int = 50000
+    max_tokens: int = 240000
     thinking_budget: int = 8192
 
 
@@ -148,7 +148,7 @@ base_url = "http://localhost:8080/v1"
 api_key = "none"
 model = "default"
 temperature = 0.2
-max_tokens = 100000
+max_tokens = 256000
 thinking_budget = 8192
 
 [context]
