@@ -23,14 +23,18 @@ import threading
 from pathlib import Path
 
 from rich.markup import escape
+from rich.segment import Segment
 from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
+from textual.geometry import Size
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.scroll_view import ScrollView
+from textual.strip import Strip
 from textual.widgets import Footer, Header, Input, Label, RichLog, Static
 
 from .. import config as cfgmod
@@ -61,23 +65,28 @@ class Notice(Message):
 
 # ---------- widgets ----------
 
-class Conversation(RichLog):
+class Conversation(ScrollView):
     """The conversation document.
 
-    This Textual build's RichLog commits one line per write() call, which
-    would shred a streamed answer into per-chunk lines. So the widget keeps
-    its own document model — completed blocks plus an in-progress block that
-    grows with each delta — and re-renders it as a single wrapping line
-    (throttled to ~20/s). RichLog's auto-scroll keeps the newest text
-    visible.
+    Keeps its own document model — completed blocks plus an in-progress
+    block that grows with each streamed delta — and renders it as a single
+    wrapping Text.
+
+    It is a plain ScrollView, not a RichLog: RichLog.write() re-renders the
+    *entire* document into strips on every call, so a streamed answer
+    (throttled to ~20/s) re-rendered the whole conversation 20x/second and
+    the full-screen repaint flickered. Here only the visible window is
+    rendered (render_line), and a refresh is scheduled at most once per
+    frame, so the frame is painted exactly once.
     """
 
     def __init__(self) -> None:
-        super().__init__(wrap=True, markup=False, highlight=False,
-                         auto_scroll=True)
+        super().__init__()
         self._blocks: list[Text] = []
         self._current: Text | None = None
         self._cur_style: str | None = None
+        self._lines: list[Strip] = []
+        self._line_width = 0
         self._last_render = 0.0
 
     def stream(self, style: str, text: str) -> None:
@@ -120,18 +129,60 @@ class Conversation(RichLog):
 
     def _rerender(self) -> None:
         self._last_render = time.monotonic()
+        self._update_lines(self._build_doc())
+        self.refresh()
+
+    def _update_lines(self, doc: Text) -> None:
+        """Wrap the document into strips and update the virtual size.
+
+        Wrapping is done here (throttled, ~20/s) rather than in
+        render_line, so each visible row is a pre-built Strip and the
+        compositor's per-row render is an O(1) lookup.
+        """
+        if not self.size:
+            return
+        width = self.scrollable_content_region.width
+        if width <= 0:
+            return
+        was_at_bottom = self.is_vertical_scroll_end
+        console = self.app.console
+        segments = console.render(doc, console.options.update_width(width))
+        self._lines = Strip.from_lines(list(Segment.split_lines(segments)))
+        self._line_width = width
+        self.virtual_size = Size(width, len(self._lines))
+        if was_at_bottom:
+            # Deferred (like RichLog.write): the scrollbar state is only
+            # settled during the layout pass, so the scroll lands after
+            # refresh but before the frame is drawn.
+            self.scroll_end(animate=False, x_axis=False)
+
+    def render_line(self, y: int) -> Strip:
+        """Render one visible row from the pre-wrapped document.
+
+        `y` is relative to the content region; the scroll offset is added
+        here (mirroring RichLog.render_line).
+        """
+        row = y + self.scroll_offset.y
+        if row < len(self._lines):
+            return self._lines[row].apply_style(self.rich_style)
+        return Strip.blank(self._line_width, self.rich_style)
+
+    def on_resize(self, event) -> None:
+        """Re-wrap the document when the terminal width changes."""
+        if self.size and self._line_width != self.scrollable_content_region.width:
+            self._update_lines(self._build_doc())
+
+    def _build_doc(self) -> Text:
         doc = Text()
         for i, part in enumerate(self._blocks):
             if i:
-                doc.append("\n")          # plain-string newline: no span-boundary interaction
+                doc.append("\n")
             doc.append_text(part)
         if self._current is not None:
             if self._blocks or doc.plain:
                 doc.append("\n")
             doc.append_text(self._current)
-        RichLog.clear(self)
-        if doc.plain:
-            RichLog.write(self, doc)
+        return doc
 
 class StatusBar(Static):
     model = reactive("--")
