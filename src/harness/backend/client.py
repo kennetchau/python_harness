@@ -90,6 +90,7 @@ class BackendClient:
             "temperature": self._temperature,
             "max_tokens": max_tokens,
             "stream": stream,
+            "reasoning_effort": 'high'
         }
         if thinking and self._thinking_budget > 0:
             payload["thinking_budget_tokens"] = self._thinking_budget
