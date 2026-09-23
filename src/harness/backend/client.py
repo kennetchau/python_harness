@@ -87,7 +87,7 @@ class BackendClient:
         payload = {
             "model": self._model,
             "messages": messages,
-            "temperature": self._temperature,
+            #"temperature": self._temperature,
             "max_tokens": max_tokens,
             "stream": stream,
             "reasoning_effort": 'medium'

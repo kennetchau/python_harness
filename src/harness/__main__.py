@@ -51,6 +51,7 @@ def _run_one_turn(cfg: cfgmod.Config, prompt: str) -> int:
     if result.commit:
         bits.append(f"workspace@{result.commit}")
     bits.append(f"prompt_tokens={result.prompt_tokens}")
+    bits.append(f"completion_tokens={result.completion_tokens}")
     console.print("  ".join(bits))
     return 0
 

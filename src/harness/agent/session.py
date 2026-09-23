@@ -199,9 +199,10 @@ class Session:
         self.append({"type": "turn_aborted", "reason": reason})
 
     def record_turn_end(self, n: int, commit: str | None,
-                        prompt_tokens: int) -> None:
+                        prompt_tokens: int, completion_tokens: int = 0) -> None:
         self.append({"type": "turn_end", "n": n, "commit": commit,
-                     "prompt_tokens": prompt_tokens})
+                     "prompt_tokens": prompt_tokens,
+                     "completion_tokens": completion_tokens})
 
     # ---------- memory ----------
 

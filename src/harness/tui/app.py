@@ -187,6 +187,7 @@ class Conversation(ScrollView):
 class StatusBar(Static):
     model = reactive("--")
     tokens = reactive(0)
+    completion_tokens = reactive(0)
 
     def __init__(self) -> None:
         super().__init__()
@@ -198,6 +199,7 @@ class StatusBar(Static):
         text.append(" model ", style="cyan bold")
         text.append(self.model)
         text.append(f"  ·  prompt tokens {self.tokens:,}")
+        text.append(f"  ·  completion tokens {self.completion_tokens:,}")
         text.append(f"  ·  session {self.session_id}", style="green")
         if self.commit:
             text.append(f"  ·  workspace@{self.commit}", style="blue")
@@ -378,6 +380,7 @@ class HarnessApp(App):
             bar = self.query_one(StatusBar)
             bar.session_id = self.session.id
             bar.tokens = 0
+            bar.completion_tokens = 0
             bar.commit = ""
             self._conversation().clear()
             self._conversation().write(f"[dim]new session {self.session.id}[/dim]")
@@ -439,11 +442,14 @@ class HarnessApp(App):
     def _on_turn_done(self, msg: TurnDone) -> None:
         bar = self.query_one(StatusBar)
         bar.tokens = msg.result.prompt_tokens
+        bar.completion_tokens = msg.result.completion_tokens
         if msg.result.commit:
             bar.commit = msg.result.commit
         if msg.result.ok:
             self._emit("info", {"text": f"turn done · prompt_tokens="
-                                        f"{msg.result.prompt_tokens:,}"
+                                        f"{msg.result.prompt_tokens:,} · "
+                                        f"completion_tokens="
+                                        f"{msg.result.completion_tokens:,}"
                                         + (f" · workspace@{msg.result.commit}"
                                            if msg.result.commit else "")})
         else:

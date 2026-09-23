@@ -61,6 +61,7 @@ class TurnResult:
     reason: str = ""
     commit: str | None = None
     prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 # ---------- small helpers ----------
@@ -211,14 +212,14 @@ class AgentLoop:
                 except BackendError as e:
                     self.session.record_error(f"compaction failed: {e}")
                     self._emit("error", {"text": f"compaction failed: {e}"})
-                    self._wrapup(turn_n, known, "aborted: compaction failed",
+                    self._wrapup(turn_n, known, 0, "aborted: compaction failed",
                                  completed=False)
-                    return TurnResult(False, f"compaction failed: {e}", None, known)
+                    return TurnResult(False, f"compaction failed: {e}", None, known, 0)
                 if new_mem is None:
-                    self._wrapup(turn_n, known, "aborted: context exceeded",
+                    self._wrapup(turn_n, known, 0, "aborted: context exceeded",
                                  completed=False)
                     return TurnResult(False, "context exceeded, start a new session",
-                                      None, known)
+                                      None, known, 0)
                 if new_mem is not self.memory:
                     self.memory = new_mem
                     self._emit("info", {"text": "context compacted"})
@@ -227,6 +228,7 @@ class AgentLoop:
         rounds = 0
         malformed_streak = 0
         prompt_tokens = self.session.last_prompt_tokens
+        completion_tokens = 0
 
         while True:
             # 3. one streaming request. Esc (KeyboardInterrupt) stops
@@ -237,42 +239,49 @@ class AgentLoop:
             except KeyboardInterrupt:
                 self.session.record_interrupted()
                 self._emit("info", {"text": "interrupted — partial output discarded"})
-                self._wrapup(turn_n, prompt_tokens, "interrupted", completed=False)
-                return TurnResult(False, "interrupted", None, prompt_tokens)
+                self._wrapup(turn_n, prompt_tokens, completion_tokens,
+                             "interrupted", completed=False)
+                return TurnResult(False, "interrupted", None, prompt_tokens,
+                                  completion_tokens)
             except BackendError as e:
                 self.session.record_error(str(e))
                 self._emit("error", {"text": str(e)})
-                self._wrapup(turn_n, prompt_tokens, "aborted: backend error",
-                             completed=False)
-                return TurnResult(False, f"backend error: {e}", None, prompt_tokens)
+                self._wrapup(turn_n, prompt_tokens, completion_tokens,
+                             "aborted: backend error", completed=False)
+                return TurnResult(False, f"backend error: {e}", None, prompt_tokens,
+                                  completion_tokens)
             if self._cancel.is_set():
                 self.session.record_interrupted()
                 self._emit("info", {"text": "interrupted — partial output discarded"})
-                self._wrapup(turn_n, prompt_tokens, "interrupted", completed=False)
-                return TurnResult(False, "interrupted", None, prompt_tokens)
+                self._wrapup(turn_n, prompt_tokens, completion_tokens,
+                             "interrupted", completed=False)
+                return TurnResult(False, "interrupted", None, prompt_tokens,
+                                  completion_tokens)
 
             if usage and usage.prompt_tokens:
                 prompt_tokens = usage.prompt_tokens
             else:
                 prompt_tokens = estimate_prompt_tokens(self.memory)
+            if usage:
+                completion_tokens += usage.completion_tokens
 
             # 5. no tool calls -> final assistant message -> wrap-up
             if not tool_calls:
                 self.memory.append({"role": "assistant", "content": content})
                 self.session.record_assistant(content)
-                commit = self._wrapup(turn_n, prompt_tokens, _first_line(content),
-                                      completed=True)
-                return TurnResult(True, "", commit, prompt_tokens)
+                commit = self._wrapup(turn_n, prompt_tokens, completion_tokens,
+                                      _first_line(content), completed=True)
+                return TurnResult(True, "", commit, prompt_tokens, completion_tokens)
 
             # guard: max tool rounds per turn. The dangling assistant+tool_calls
             # message is deliberately NOT appended, so memory stays valid.
             if rounds >= max_rounds:
                 self.session.record_turn_aborted(f"max_tool_rounds ({max_rounds}) exceeded")
                 self._emit("error", {"text": f"max tool rounds ({max_rounds}) exceeded — stopping"})
-                self._wrapup(turn_n, prompt_tokens, "aborted: max tool rounds",
-                             completed=False)
+                self._wrapup(turn_n, prompt_tokens, completion_tokens,
+                             "aborted: max tool rounds", completed=False)
                 return TurnResult(False, f"max tool rounds ({max_rounds}) exceeded",
-                                  None, prompt_tokens)
+                                  None, prompt_tokens, completion_tokens)
             rounds += 1
 
             # 4. assistant message with tool_calls -> memory + JSONL, then execute
@@ -284,22 +293,27 @@ class AgentLoop:
                 for tc in tool_calls:
                     malformed_streak, stop_reason = self._execute_call(tc, malformed_streak)
                     if stop_reason:
-                        self._wrapup(turn_n, prompt_tokens,
+                        self._wrapup(turn_n, prompt_tokens, completion_tokens,
                                      "aborted: malformed tool calls", completed=False)
-                        return TurnResult(False, stop_reason, None, prompt_tokens)
+                        return TurnResult(False, stop_reason, None, prompt_tokens,
+                                          completion_tokens)
             except KeyboardInterrupt:
                 self._backfill_interrupted(tool_calls)
                 self.session.record_interrupted()
                 self._emit("info", {"text": "interrupted during tool execution"})
-                self._wrapup(turn_n, prompt_tokens, "interrupted", completed=False)
-                return TurnResult(False, "interrupted", None, prompt_tokens)
+                self._wrapup(turn_n, prompt_tokens, completion_tokens,
+                             "interrupted", completed=False)
+                return TurnResult(False, "interrupted", None, prompt_tokens,
+                                  completion_tokens)
 
             if self._cancel.is_set():
                 self._backfill_interrupted(tool_calls)
                 self.session.record_interrupted()
                 self._emit("info", {"text": "interrupted during tool execution"})
-                self._wrapup(turn_n, prompt_tokens, "interrupted", completed=False)
-                return TurnResult(False, "interrupted", None, prompt_tokens)
+                self._wrapup(turn_n, prompt_tokens, completion_tokens,
+                             "interrupted", completed=False)
+                return TurnResult(False, "interrupted", None, prompt_tokens,
+                                  completion_tokens)
 
             # otherwise: loop back to 3 — request-driven, approval pauses
             # cost nothing on the wire
@@ -426,8 +440,8 @@ class AgentLoop:
         self._emit("info", {"text": "workspace changes this turn:\n"
                                      + _short_text("\n\n".join(parts), 4000)})
 
-    def _wrapup(self, turn_n: int, prompt_tokens: int, summary: str,
-                completed: bool) -> str | None:
+    def _wrapup(self, turn_n: int, prompt_tokens: int, completion_tokens: int,
+                summary: str, completed: bool) -> str | None:
         """Final diff + the two independent auto-commits. Returns the
         workspace commit hash (None when the workspace was unchanged)."""
         commit: str | None = None
@@ -438,13 +452,14 @@ class AgentLoop:
                 commit = gitstore.commit_all(
                     ws, f"harness: {self.session.agent} {summary} [session:{self.session.id}]")
         if completed:
-            self.session.record_turn_end(turn_n, commit, prompt_tokens)
+            self.session.record_turn_end(turn_n, commit, prompt_tokens, completion_tokens)
             state_msg = f"session {self.session.id}: turn {turn_n}"
         else:
             state_msg = f"session {self.session.id}: turn {turn_n} (aborted)"
         gitstore.commit_all(cfgmod.STATE_DIR, state_msg)
         bits = [f"turn {turn_n} {'done' if completed else 'aborted'}",
-                f"prompt_tokens={prompt_tokens}"]
+                f"prompt_tokens={prompt_tokens}",
+                f"completion_tokens={completion_tokens}"]
         if commit:
             bits.append(f"workspace@{commit}")
         self._emit("info", {"text": "  ".join(bits)})
