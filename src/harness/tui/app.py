@@ -465,8 +465,12 @@ class HarnessApp(App):
         conv = self._conversation()
         if kind == "text":
             conv.stream("text", data["text"])
+            if "tokens" in data:
+                self.query_one(StatusBar).completion_tokens = data["tokens"]
         elif kind == "reasoning":
             conv.stream(REASONING_STYLE, data["text"])
+            if "tokens" in data:
+                self.query_one(StatusBar).completion_tokens = data["tokens"]
         elif kind == "tool":
             conv.flush()
             args = data.get("args") or {}

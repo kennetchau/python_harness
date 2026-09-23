@@ -338,12 +338,17 @@ class AgentLoop:
         content_parts: list[str] = []
         calls: dict[int, dict] = {}
         usage: Usage | None = None
+        completion_chars = 0
         for ev in self.client.stream_chat(self.memory, tools=self._schemas, cancel=self._cancel):
             if isinstance(ev, ReasoningDelta):
-                self._emit("reasoning", {"text": ev.text})
+                completion_chars += len(ev.text)
+                self._emit("reasoning", {"text": ev.text,
+                                         "tokens": completion_chars // 4})
             elif isinstance(ev, TextDelta):
                 content_parts.append(ev.text)
-                self._emit("text", {"text": ev.text})
+                completion_chars += len(ev.text)
+                self._emit("text", {"text": ev.text,
+                                    "tokens": completion_chars // 4})
             elif isinstance(ev, ToolCallDelta):
                 c = calls.setdefault(ev.index, {"id": None, "name": None, "args": []})
                 if ev.id:
