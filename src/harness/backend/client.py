@@ -114,7 +114,8 @@ class BackendClient:
                 time.sleep(RETRY_BACKOFF_SEC)
                 continue
             if resp.status_code >= 500:
-                body = resp.read()[:200].decode("utf-8", "replace")
+                #body = resp.read()[:200].decode("utf-8", "replace")
+                body = resp.read().decode("utf-8", "replace")
                 resp.close()
                 last = f"HTTP {resp.status_code}: {body}"
                 if attempt == 2:
