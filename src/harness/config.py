@@ -65,7 +65,7 @@ class LimitsConfig:
     exec_output_chars: int = 20000
     web_max_chars: int = 50000
     exec_network: bool = True
-    max_tool_rounds: int = 50
+    max_tool_rounds: int = 200
 
 
 @dataclass(frozen=True)
@@ -183,7 +183,7 @@ exec_timeout_sec = 300
 exec_output_chars = 20000
 web_max_chars = 50000
 exec_network = true           # false wraps commands in `unshare -n`
-max_tool_rounds = 50
+max_tool_rounds = 200
 
 [search]
 engine = "ddgs"
