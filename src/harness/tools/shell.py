@@ -7,7 +7,9 @@ to run with network instead of silently relaxing the sandbox.
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 
 from .registry import ToolContext, cap, err, res, register
@@ -19,18 +21,40 @@ def _shell_argv(ctx: ToolContext, command: str, sandboxed: bool) -> list[str]:
     return ["unshare", "-n", "bash", "-c", command]
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill the whole process group, not just the direct child.
+
+    A `bash -c` command may spawn its own children (builds, servers,
+    pipelines). Killing only the direct child leaks those, so pids keep
+    piling up until the process limit is hit. The group only exists
+    because we started it (start_new_session=True), so signaling it
+    cannot reach the harness itself.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.kill()
+
+
 def _run(argv: list[str], ctx: ToolContext, command_display: str):
     timeout = ctx.limits.exec_timeout_sec
     proc = subprocess.Popen(argv, cwd=ctx.workspace,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True)
+                            stdin=subprocess.DEVNULL, text=True,
+                            start_new_session=True)
     try:
         output, _ = proc.communicate(timeout=timeout)
         code = proc.returncode
         suffix = ""
     except subprocess.TimeoutExpired:
-        proc.kill()
-        output, _ = proc.communicate()
+        _kill_tree(proc)
+        # Bounded second wait: communicate can only re-raise if a child
+        # that survived the group kill still holds the pipe open.
+        try:
+            output, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            output = ""
         code, suffix = 124, f" (killed after {timeout}s)"
     output = (output or "").strip()
     body = cap(output, ctx.limits.exec_output_chars) if output else "(no output)"
