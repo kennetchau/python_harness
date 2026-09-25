@@ -188,14 +188,28 @@ class StatusBar(Static):
     model = reactive("--")
     tokens = reactive(0)
     completion_tokens = reactive(0)
+    working = reactive(False)     # True while the agent's turn is running
+    working_what = reactive("thinking")   # what the turn is doing ("thinking" / tool name)
 
     def __init__(self) -> None:
         super().__init__()
         self.session_id = "--"
         self.commit = ""
+        self.working_since: float | None = None
+        self.set_interval(0.25, self._pulse)
+
+    def _pulse(self) -> None:
+        """Tick the elapsed timer while a turn is running."""
+        if self.working:
+            self.refresh()
 
     def render(self) -> Text:
         text = Text()
+        if self.working:
+            elapsed = (f" {time.monotonic() - self.working_since:3.0f}s"
+                       if self.working_since is not None else "")
+            text.append(f" {self.working_what}{elapsed} ", style="reverse yellow")
+            text.append("  ")
         text.append(" model ", style="cyan bold")
         text.append(self.model)
         text.append(f"  ·  prompt tokens {self.tokens:,}")
@@ -418,6 +432,7 @@ class HarnessApp(App):
         conv.write(Text("─ turn " + str(self.session.turn_number + 1) + " " * 24,
                         style="dim"))        
         self._turn_active = True
+        self._set_working(True)
         self.run_worker(lambda: self._run_turn_worker(prompt), name="turn", group="turns", thread=True)
 
     def _run_turn_worker(self, prompt: str) -> None:
@@ -437,6 +452,22 @@ class HarnessApp(App):
 
     def _turn_inactive(self) -> None:
         self._turn_active = False
+        self._set_working(False)
+
+    def _set_working(self, active: bool, what: str = "thinking") -> None:
+        """Status-bar indicator: the agent is doing something (UI thread only)."""
+        if not active and not self.query_one(StatusBar).working:
+            return
+        bar = self.query_one(StatusBar)
+        if active:
+            bar.working = True
+            bar.working_what = what
+            if bar.working_since is None:
+                bar.working_since = time.monotonic()
+        else:
+            bar.working = False
+            bar.working_what = "thinking"
+            bar.working_since = None
 
     @on(TurnDone)
     def _on_turn_done(self, msg: TurnDone) -> None:
@@ -462,6 +493,20 @@ class HarnessApp(App):
     # -- emit seam (called from worker threads) --
 
     def _emit(self, kind: str, data: dict) -> None:
+        # Keep the status-bar indicator in sync with what the turn is doing
+        # ("thinking" while the model streams, the tool name while a tool
+        # runs). Hop to the UI thread unless emit is already on it.
+        if kind in ("text", "reasoning", "tool_result"):
+            label = "thinking"
+        elif kind == "tool":
+            label = f"⚙ {data['name']}"
+        else:
+            label = None
+        if label is not None:
+            try:
+                self.call_from_thread(self._set_working, True, label)
+            except Exception:
+                self._set_working(True, label)   # already on the UI thread
         conv = self._conversation()
         if kind == "text":
             conv.stream("text", data["text"])
