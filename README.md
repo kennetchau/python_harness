@@ -22,7 +22,20 @@ and the workspace (default `/workspace`). Seeding is idempotent.
 
 ## Usage
 
-Headless — print the config summary and run one agent turn:
+Two ways to run it:
+
+**In a container (recommended)** — `run.sh` runs the harness in podman with
+the project and a persistent state dir mounted:
+
+```sh
+./run.sh /path/to/project                   # TUI
+./run.sh once "prompt" /path/to/project     # headless one-shot
+```
+
+Environment knobs: `IMAGE` (default `harness`), `STATE_DIR`
+(default `$HOME/harness-state`), `CPUS` (8), `MEMORY` (16g).
+
+**Directly** — headless, print the config summary and run one agent turn:
 
 ```sh
 uv run python -m harness "create hello.txt containing: hi"
@@ -42,7 +55,7 @@ TUI commands (typed in the prompt input):
 | `/models` | List models served by the backend |
 | `/model <name>` | Switch model (persisted to `config.toml`) |
 | `/new` | Start a new session |
-| `/compact` | Compact the context now (manual mode) |
+| `/compact` | Compact the context now |
 | `/quit` | Exit |
 
 `Ctrl-C` interrupts a running turn (the loop stops at the next safe point and
@@ -57,7 +70,7 @@ default file is written on first run and is git-tracked.
 
 | Section | Keys | Notes |
 | --- | --- | --- |
-| `[backend]` | `base_url`, `api_key`, `model`, `temperature`, `max_tokens` | OpenAI-compatible endpoint |
+| `[backend]` | `base_url`, `api_key`, `model`, `temperature`, `max_tokens`, `thinking_budget` | OpenAI-compatible endpoint |
 | `[context]` | `max_tokens`, `summarize`, `summarize_threshold`, `keep_recent_turns`, `summary_max_tokens` | `summarize` = `off` \| `auto` \| `manual`; auto compaction triggers when prompt tokens exceed `max_tokens * summarize_threshold` |
 | `[workspace]` | `path`, `auto_git` | Workspace root; auto-commit workspace changes each turn |
 | `[tools]` | `enabled` | Master switch for all tools |
@@ -78,12 +91,12 @@ Environment variables:
 
 **Agent loop** (`src/harness/agent/loop.py`) — one `run_turn(user_message)`
 call drives a full turn: budget check (compaction) → streaming request →
-(tool calls → approval → execute → tool results)\* → final message → wrap-up
-(final diff + auto-commits). Memory is a plain list of OpenAI wire-format
-messages kept in lockstep with the session log, so a resumed session replays
-to exactly the same memory. Tool errors are data for the model; only
-backend/loop failures abort the turn, and an aborted or interrupted turn
-still commits its side effects.
+(tool calls → approval → execute → tool results → budget check)\* → final
+message → wrap-up (final diff + auto-commits). Memory is a plain list of
+OpenAI wire-format messages kept in lockstep with the session log, so a
+resumed session replays to exactly the same memory. Tool errors are data for
+the model; only backend/loop failures abort the turn, and an aborted or
+interrupted turn still commits its side effects.
 
 **Sessions** (`src/harness/agent/session.py`) — append-only JSONL event logs
 under `/state/sessions/<id>.jsonl` (id: `YYYYMMDD-HHMM-<agent>`). Events are
@@ -95,7 +108,11 @@ is exceeded, the oldest real turns (keeping the most recent
 `keep_recent_turns`) are summarized into a single summary message. Cuts land
 on turn boundaries so assistant/tool-call groups are never split, and
 existing summaries are never re-summarized, keeping memory consistent with
-replay.
+replay. The budget is checked at turn start **and after every tool round**,
+so a long tool-call chain compacts as it grows instead of only when the next
+turn begins; when a single long chain outgrows the budget and there are no
+older turns to drop, the cut falls inside the current turn and keeps the
+last `keep_recent_turns` complete rounds.
 
 **Auto-commits** (`src/harness/state/gitstore.py`) — with `auto_git`, each
 turn commits workspace changes (message: first line of the final reply) and
@@ -124,6 +141,7 @@ errors are returned as data, never raised.
 | `write_file` | Create or overwrite a file | `ask` |
 | `edit_file` | Replace an exact string (unique match required unless `replace_all`) | `ask` |
 | `run_command` | Run a shell command in the workspace | `ask` |
+| `delete_file` | Delete a file | `ask` |
 
 When approval is `ask`, the user sees a preview (diff for edits, command
 text for exec, URL for web) and answers yes / no / always-allow.

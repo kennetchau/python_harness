@@ -204,25 +204,9 @@ class AgentLoop:
         self.memory.append({"role": "user", "content": user_message})
 
         # 2. budget check -> compaction pass
-        if cfg.context.summarize == "auto":
-            known = self.session.last_prompt_tokens or estimate_prompt_tokens(self.memory)
-            if known > cfg.context.max_tokens * cfg.context.summarize_threshold:
-                try:
-                    new_mem = ensure_budget(self.memory, self.client, cfg, self.session)
-                except BackendError as e:
-                    self.session.record_error(f"compaction failed: {e}")
-                    self._emit("error", {"text": f"compaction failed: {e}"})
-                    self._wrapup(turn_n, known, 0, "aborted: compaction failed",
-                                 completed=False)
-                    return TurnResult(False, f"compaction failed: {e}", None, known, 0)
-                if new_mem is None:
-                    self._wrapup(turn_n, known, 0, "aborted: context exceeded",
-                                 completed=False)
-                    return TurnResult(False, "context exceeded, start a new session",
-                                      None, known, 0)
-                if new_mem is not self.memory:
-                    self.memory = new_mem
-                    self._emit("info", {"text": "context compacted"})
+        fail = self._check_budget(turn_n)
+        if fail is not None:
+            return fail
 
         max_rounds = cfg.tools.limits.max_tool_rounds
         rounds = 0
@@ -315,6 +299,16 @@ class AgentLoop:
                 return TurnResult(False, "interrupted", None, prompt_tokens,
                                   completion_tokens)
 
+            # 6. mid-turn budget check: a long tool chain grows memory every
+            #    round, so compact inside the loop too, not just at turn start.
+            #    Memory is always valid here: the assistant+tool_calls+tool
+            #    group from this round is complete. prompt_tokens is the live
+            #    in-turn count (backend usage when available), so growth from
+            #    this turn's tool results actually trips the threshold.
+            fail = self._check_budget(turn_n, known_tokens=prompt_tokens)
+            if fail is not None:
+                return fail
+
             # otherwise: loop back to 3 — request-driven, approval pauses
             # cost nothing on the wire
 
@@ -328,6 +322,43 @@ class AgentLoop:
         already executing runs on to completion or its own timeout."""
         self._cancel.set()
 
+    def _check_budget(self, turn_n: int, known_tokens: int | None = None) -> TurnResult | None:
+        """Auto compaction pass. Returns None when memory fits the budget (or
+        summarization is off) — otherwise a TurnResult that aborts the turn.
+        Called at turn start AND after each tool round, so a long tool chain
+        compacts consistently instead of only at the next turn's start.
+
+        The gate must look at the CURRENT memory, not a count from the last
+        request: a tool round appends the assistant+tool message and every
+        tool result, so the request's reported prompt_tokens is always one
+        round behind the memory that actually gets sent next. We therefore
+        max() the in-turn count, the last turn's count, and a fresh local
+        estimate of the current memory. Over-gating is safe — ensure_budget
+        re-checks the live estimate and is a no-op when memory already fits."""
+        if self.cfg.context.summarize != "auto":
+            return None
+        known = max(known_tokens or 0, self.session.last_prompt_tokens,
+                    estimate_prompt_tokens(self.memory))
+        if known <= self.cfg.context.max_tokens * self.cfg.context.summarize_threshold:
+            return None
+        try:
+            new_mem = ensure_budget(self.memory, self.client, self.cfg, self.session,
+                                    cancel=self._cancel)
+        except BackendError as e:
+            self.session.record_error(f"compaction failed: {e}")
+            self._emit("error", {"text": f"compaction failed: {e}"})
+            self._wrapup(turn_n, known, 0, "aborted: compaction failed",
+                         completed=False)
+            return TurnResult(False, f"compaction failed: {e}", None, known, 0)
+        if new_mem is None:
+            self._wrapup(turn_n, known, 0, "aborted: context exceeded",
+                         completed=False)
+            return TurnResult(False, "context exceeded, start a new session",
+                              None, known, 0)
+        if new_mem is not self.memory:
+            self.memory = new_mem
+            self._emit("info", {"text": "context compacted"})
+        return None
 
     # -- internals ----------------------------------------------------------
 
